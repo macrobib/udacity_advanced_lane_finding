@@ -1,6 +1,7 @@
 import cv2
 import time
 import glob
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
@@ -68,8 +69,8 @@ class Calibration:
                 self.objpoints.append(objp)
                 if self.visualize == True:
                     cv2.drawChessboardCorners(img, (self.nx, self.ny), corners, ret)
-                    cv2.imshow('image', img)
-                    cv2.waitKey(0)
+                    plt.imshow(img)
+                    plt.show()
         self.calib_status, self.mtx, self.dist, rvex, tvex = cv2.calibrateCamera(self.objpoints,
                                                              self.imgpoints, self.shape, None, None)
 
@@ -80,11 +81,13 @@ class Calibration:
             for file in self.calib_files:
                 img = cv2.imread(file)
                 dst = cv2.undistort(img, self.mtx, self.dist, None, self.mtx)
-                cv2.imshow('image', dst)
-                cv2.waitKey(0)
-                write_path = output_dir + '/' + 'undistort_' + str(file).split('\\')[-1]
-                cv2.imwrite(write_path, dst)
-                self.display_2d_grid(img, dst)
+                #cv2.imshow('image', dst)
+                #cv2.waitKey(0)
+                #plt.imshow(dst)
+                #plt.show()
+                #write_path = output_dir + '/' + 'undistort_' + str(file).split('\\')[-1]
+                #cv2.imwrite(write_path, dst)
+                #self.display_2d_grid(img, dst)
 
     def display_2d_grid(self, img, undistorted):
         """Display calibrated images in a 2D grid."""
@@ -96,12 +99,23 @@ class Calibration:
         ax2.set_title('Undistorted Image', fontsize=15)
         plt.subplots_adjust(left=0., right=1, top=0.9, bottom=0.)
         plt.show()
-
+    
+    def pickle_data(self):
+        """Save camera matrix and distribution"""
+        store = {
+                'mtx':self.mtx,
+                'dist':self.dist
+                }
+        with open('../data/cam.p', 'wb') as f:
+            pickle.dump(store, f, pickle.HIGHEST_PROTOCOL)
+        
 
 def main():
     calib = Calibration(9, 6, '../camera_cal')
     calib.calibrate()
-    calib.undistort()
+    #calib.undistort()
+    calib.pickle_data()
+
 
 if __name__ == '__main__':
     main()
