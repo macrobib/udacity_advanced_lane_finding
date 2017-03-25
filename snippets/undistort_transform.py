@@ -33,8 +33,7 @@ def corner_unwarp(img, nx, ny, mtx, dist):
         src = np.float32([corners[0], corners[nx-1], corners[-1], corners[-nx]])
         dst = np.float32([[offset, offset], [img_size[0] - offset, offset],
                 [img_size[0]-offset, img_size[1]-offset], [offset, img_size[1] - offset]])
-        
-        
+
         M = cv2.getPerspectiveTransform(src, dst)
         warped = cv2.warpPerspective(dst, M, img_size)
 

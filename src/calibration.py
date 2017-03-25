@@ -63,7 +63,7 @@ class Calibration:
             ret, corners = cv2.findChessboardCorners(gray, (self.nx, self.ny), None)
 
             if ret == True:
-                print(corners[0][0])
+                # print(corners[0][0])
                 time.sleep(4)
                 self.imgpoints.append(corners)
                 self.objpoints.append(objp)
@@ -81,6 +81,9 @@ class Calibration:
             for file in self.calib_files:
                 img = cv2.imread(file)
                 dst = cv2.undistort(img, self.mtx, self.dist, None, self.mtx)
+                warped = self.perspectiveTransform(dst)
+                if warped:
+                    self.display_2d_grid(img, warped)
                 #cv2.imshow('image', dst)
                 #cv2.waitKey(0)
                 #plt.imshow(dst)
@@ -88,6 +91,40 @@ class Calibration:
                 #write_path = output_dir + '/' + 'undistort_' + str(file).split('\\')[-1]
                 #cv2.imwrite(write_path, dst)
                 #self.display_2d_grid(img, dst)
+
+    def perspectiveTransform(self, undistorted):
+        gray = cv2.cvtColor(undistorted, cv2.COLOR_BGR2GRAY)
+        nx = self.nx
+        ny = self.ny
+        ret, corners = cv2.findChessboardCorners(gray, (self.nx, self.ny), None)
+        if ret == False:
+            ret, corners = cv2.findChessboardCorners(gray, (8, 6), None)
+        if ret == False:
+            ret, corners = cv2.findChessboardCorners(gray, (8, 5), None)
+        if ret == False:
+            ret, corners = cv2.findChessboardCorners(gray, (9, 5), None)
+        print("chess board corners: ", ret)
+        warped = None
+        if ret:
+            # print("corner 1", corners[0][0])
+            # print("corner 2",corners[self.nx-1][0])
+            # print("corner 3", corners[-1][0])
+            # print("corner 4", corners[-self.nx][0])
+            cv2.drawChessboardCorners(undistorted, (self.nx, self.ny), corners, ret)
+            offset = 100
+            img_size = (gray.shape[1], gray.shape[0])
+            src = np.float32([corners[0][0], corners[self.nx-1][0], corners[-1][0], corners[-self.nx][0]])
+            print("src", src, src.shape)
+
+            dst = np.float32([[offset, offset], [img_size[0] - offset,
+                              offset], [img_size[0] - offset, img_size[1] - offset], [offset, img_size[1] - offset]])
+
+            print("dst", dst)
+            M = cv2.perspectiveTransform(src, dst)
+            print(M, M.shape)
+            warped = cv2.warpPerspective(undistorted, M, img_size)
+        return warped
+
 
     def display_2d_grid(self, img, undistorted):
         """Display calibrated images in a 2D grid."""
@@ -113,7 +150,7 @@ class Calibration:
 def main():
     calib = Calibration(9, 6, '../camera_cal')
     calib.calibrate()
-    #calib.undistort()
+    calib.undistort()
     calib.pickle_data()
 
 
