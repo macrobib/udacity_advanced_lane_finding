@@ -139,6 +139,8 @@ class Calibration:
     
     def pickle_data(self):
         """Save camera matrix and distribution"""
+        print("mtx: ",self.mtx)
+        print("dist: ", self.dist)
         store = {
                 'mtx':self.mtx,
                 'dist':self.dist
@@ -150,7 +152,7 @@ class Calibration:
 def main():
     calib = Calibration(9, 6, '../camera_cal')
     calib.calibrate()
-    calib.undistort()
+    # calib.undistort()
     calib.pickle_data()
 
 
