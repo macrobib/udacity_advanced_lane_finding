@@ -4,8 +4,7 @@ import glob
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-
+import os.path as path
 
 def test_calib():
     nx = 9
@@ -29,7 +28,7 @@ def test_calib():
         plt.show()
 
 
-class Calibration:
+class calibration:
     """ Do the caliberation on the chess board images."""
 
     def __init__(self, nx=9, ny=6, directory=None):
@@ -44,6 +43,8 @@ class Calibration:
         self.mtx = None
         self.dist = None
         self.calib_status = False
+        self.pickle_file = './data/cam.p'
+        self.caliberation_pipeline()
 
 
     def calibrate(self):
@@ -74,7 +75,7 @@ class Calibration:
         self.calib_status, self.mtx, self.dist, rvex, tvex = cv2.calibrateCamera(self.objpoints,
                                                              self.imgpoints, self.shape, None, None)
 
-    def undistort(self, output_dir = '../calibrated_images'):
+    def undistort_test(self, output_dir = '../calibrated_images'):
         "Undistort the calibration images."
         print("caliberation status", self.calib_status)
         if self.calib_status:
@@ -92,6 +93,15 @@ class Calibration:
                 #cv2.imwrite(write_path, dst)
                 #self.display_2d_grid(img, dst)
 
+    def undistort_image(self, img):
+        """
+        Undistort the image, as per calibration parameters.
+        :param img: Input image.
+        :return: Undistorted image.
+        """
+        dst = cv2.undistort(img, self.mtx, self.dist, None, self.mtx)
+        return dst
+
     def perspectiveTransform(self, undistorted):
         gray = cv2.cvtColor(undistorted, cv2.COLOR_BGR2GRAY)
         nx = self.nx
@@ -106,10 +116,6 @@ class Calibration:
         print("chess board corners: ", ret)
         warped = None
         if ret:
-            # print("corner 1", corners[0][0])
-            # print("corner 2",corners[self.nx-1][0])
-            # print("corner 3", corners[-1][0])
-            # print("corner 4", corners[-self.nx][0])
             cv2.drawChessboardCorners(undistorted, (self.nx, self.ny), corners, ret)
             offset = 100
             img_size = (gray.shape[1], gray.shape[0])
@@ -119,9 +125,7 @@ class Calibration:
             dst = np.float32([[offset, offset], [img_size[0] - offset,
                               offset], [img_size[0] - offset, img_size[1] - offset], [offset, img_size[1] - offset]])
 
-            print("dst", dst)
-            M = cv2.perspectiveTransform(src, dst)
-            print(M, M.shape)
+            M = cv2.getPerspectiveTransform(src, dst)
             warped = cv2.warpPerspective(undistorted, M, img_size)
         return warped
 
@@ -145,16 +149,25 @@ class Calibration:
                 'mtx':self.mtx,
                 'dist':self.dist
                 }
-        with open('../data/cam.p', 'wb') as f:
+        with open(self.pickle_file, 'wb') as f:
             pickle.dump(store, f, pickle.HIGHEST_PROTOCOL)
-        
 
-def main():
-    calib = Calibration(9, 6, '../camera_cal')
-    calib.calibrate()
-    # calib.undistort()
-    calib.pickle_data()
+    def unpickle_data(self):
+        """Load the pickled calibration data."""
+        data = pickle.load(open(self.pickle_file, 'rb'))
+        mtx = data['mtx']
+        dist = data['dist']
+        return (mtx, dist)
 
 
-if __name__ == '__main__':
-    main()
+    def caliberation_pipeline(self):
+        pickle_data = None
+        if path.exists(self.pickle_file):
+            pickle_data = self.unpickle_data()
+            self.mtx = pickle_data[0]
+            self.dist = pickle_data[1]
+        else:
+            self.calibrate()
+            self.pickle_data()
+            pickle_data = (self.mtx, self.dist)
+        return pickle_data

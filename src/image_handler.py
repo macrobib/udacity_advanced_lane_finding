@@ -137,5 +137,5 @@ class ImageHandler:
             color = (255,)
             print(vertices)
             cv2.fillPoly(binary_mask, vertices, color)
-            masked_image = cv2.bitwise_and(img, binary_mask)
+            masked_image = cv2.bitwise_and(image, binary_mask)
             return masked_image
