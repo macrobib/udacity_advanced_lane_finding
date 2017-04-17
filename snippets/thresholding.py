@@ -2,21 +2,27 @@ import numpy as np
 import cv2
 import time
 import pickle
+from scipy.signal import medfilt
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
+from moviepy.editor import VideoFileClip
 
-image = cv2.imread('../examples/color-shadow-example.jpg')
+# image = cv2.imread('../examples/color-shadow-example.jpg')
 # image = cv2.imread('../examples/solidYellowCurve.jpg')
 
 #Load the calibration paramters.
 data = pickle.load(open('../data/cam.p', 'rb'))
 mtx = data['mtx']
 dist = data['dist']
+condition = {
+    'visualize': False,
+    'smoothen' : False,
+    'sharpen'  : False
+}
 
 
-def gradient_and_combine(s_thresh=(50, 100), sx_thresh=(10, 200)):
+def gradient_and_combine(image, s_thresh=(50, 100), sx_thresh=(10, 200)):
     """Take gradient of the color channels and combine."""
-    global image
     image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     image_hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -132,8 +138,7 @@ def plot_multiple(image1, image2, image3, labels):
     plt.show()
 
 
-def visualize_colorspace():
-    global image
+def visualize_colorspace(image):
     thres = (180, 255)
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     plt.imshow(thresholdImage(gray, thres), cmap='gray')
@@ -166,15 +171,14 @@ def visualize_colorspace():
     # Threshold S channel.
     thres = (50, 70)
     image_h = image_hsv[:, :, 2]
-    print("Max and min..",np.max(image_h), np.min(image_h))
     plt.imshow(image_h, cmap='gray')
     plt.show()
 
 
-def segment_area_of_interest(img):
+def vertices_area_of_interest(img):
     """Segment area of interest."""
+    global y_points
     image = np.copy(img)
-    print("Image shape: ", image.shape)
     width = image.shape[1]
     height = image.shape[0]
 
@@ -194,21 +198,21 @@ def segment_area_of_interest(img):
     right_bot_inner = (x2_2 - 100, height)
     left_top_inner = (x1_2 + 20, y + 50)
     right_top_inner = (x2_1 - 20, y + 50)
-
+    y_points = np.linspace(0, img.shape[0], 101)
     vertices = np.array([[left_bot_outer, left_top_outer, right_top_outer,
                           right_bot_outer, right_bot_inner,
                           right_top_inner, left_top_inner, left_bot_inner ]], dtype=np.int32)
+    print("Vertices area of interest: --", vertices.shape)
     return vertices
 
 
-def create_perspective_transform(img):
+def create_perspective_transform(img, visualize=False):
     """
     Create a perspective transform based on the predefined set of values.
     :return:
     """
     output = np.copy(img)
     plt_img = np.copy(img)
-    print("Image shape: ", img.shape)
     width = output.shape[1]
     height = output.shape[0]
     img_size = (output.shape[1], output.shape[0])
@@ -234,20 +238,22 @@ def create_perspective_transform(img):
 
     arg_src = np.array([left_top_outer, right_top_outer, right_bot_outer,
                         left_bot_outer], dtype=np.float32)
-    print("source coordinates...", arg_src)
 
     dst = np.float32([[offset, 0], [img_size[0]-offset, 0],
                                      [img_size[0]-offset, img_size[1]],
                                      [offset, img_size[1]]] )
 
     # # Test the coordinates.
-    # cv2.polylines(plt_img, src, True, (153, 255, 51), thickness=1)
-    # cv2.imshow('default', plt_img)
-    # cv2.waitKey(0)
+    if visualize:
+        cv2.polylines(plt_img, src, True, (153, 255, 51), thickness=1)
+        cv2.imshow('default', plt_img)
+        cv2.waitKey(0)
 
     M = cv2.getPerspectiveTransform(arg_src, dst)
+    MInv = cv2.getPerspectiveTransform(dst, arg_src)
     warped = cv2.warpPerspective(output, M, (width, height))
-    return warped
+    print("Warped dimension: - ", warped.shape[0])
+    return warped, M , MInv
 
 
 def mask_region(img):
@@ -256,15 +262,13 @@ def mask_region(img):
     :param img: Input Image.
     :return: Binary image with region mask.
     """
-    global image
-    temp_image = np.copy(image)
+    temp_image = np.copy(img)
     binary_mask = np.zeros_like(img)
-    vertices = segment_area_of_interest(img)
+    vertices = vertices_area_of_interest(img)
     cv2.polylines(temp_image, vertices, True, (0, 255, 255))
     plt.imshow(temp_image)
     plt.show()
     color = (255,)
-    print(vertices)
     cv2.fillPoly(binary_mask, vertices, color)
     masked_image = cv2.bitwise_and(img, binary_mask)
     return masked_image
@@ -277,7 +281,6 @@ def undistort_image(img):
     """
     dst = cv2.undistort(img, mtx, dist, None, mtx)
     return dst
-
 
 def create_merged_binary(image, apply_gray=False):
     """Create a merged binary using magnitude, gradient and direction."""
@@ -303,20 +306,21 @@ def create_merged_binary(image, apply_gray=False):
     return output
 
 
-def detect_lane_lines(img):
+def mark_area_of_interest(img, visualize=False):
     # binary_image = create_merged_binary(img, apply_gray=True)
-    binary_image = codsnippet_from_udacity(img)
+    binary_image = binarize_image(img)
     output = mask_region(binary_image)
-    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
-    f.tight_layout()
-    ax1.imshow(binary_image, cmap='gray')
-    ax1.set_title("Binary", fontsize=20)
-    ax2.imshow(output, cmap='gray')
-    plt.show()
+    if visualize:
+        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+        f.tight_layout()
+        ax1.imshow(binary_image, cmap='gray')
+        ax1.set_title("Binary", fontsize=20)
+        ax2.imshow(output, cmap='gray')
+        plt.show()
     return output
 
 
-def codsnippet_from_udacity(img):
+def binarize_image(img, visualize=False):
     hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
     s_channel = hls[:, :, 2]
 
@@ -349,38 +353,334 @@ def codsnippet_from_udacity(img):
     # Combine the two binary thresholds
     combined_binary = np.zeros_like(sxbinary)
     combined_binary[(s_binary == 1) | (sxbinary == 1)] = 1
+    if visualize:
+        # Plotting thresholded images
+        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+        ax1.set_title('Stacked thresholds')
+        ax1.imshow(color_binary)
 
-    # Plotting thresholded images
-    # f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-    # ax1.set_title('Stacked thresholds')
-    # ax1.imshow(color_binary)
+        ax2.set_title('Combined S channel and gradient thresholds')
+        ax2.imshow(combined_binary, cmap='gray')
+        plt.show()
 
-    # ax2.set_title('Combined S channel and gradient thresholds')
-    # ax2.imshow(combined_binary, cmap='gray')
-    # plt.show()
     return combined_binary
 
 
+def histogram_detect(img, visualize = False):
+    """ Find peaks in histogram in the binary image."""
+    global y_points
+    histogram = np.sum(img[img.shape[0]//2:, :], axis=0)
+    # https://gist.github.com/jul/3794506
+    histogram = medfilt(histogram, [41]) # Smoothen the histogram values.
+    plt.plot(histogram)
+    plt.show()
+    out_img = np.dstack((img, img, img)) * 255
+    plt.imshow(out_img)
+    plt.show()
+
+    midpoint = np.int(histogram.shape[0]//2)
+    leftx_base = np.argmax(histogram[:midpoint])
+    rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+    nwindows = 9
+    window_height = np.int(img.shape[0]/nwindows)
+
+    nonzero = img.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+
+    leftx_current = leftx_base
+    rightx_current = rightx_base
+
+    # Width of the window.
+    width = 100
+    # Minimum number of pixels found in recenter window.
+    minpix = 50
+
+    # Empty lists to recieve left and right indices.
+    left_lane_indices = []
+    right_lane_indices = []
+
+    # loop through the window
+    for window in range(nwindows):
+        win_y_low       = img.shape[0] - (window + 1)* window_height
+        win_y_high      = img.shape[0] - window * window_height
+        win_xleft_low   = leftx_current - width
+        win_xleft_high  = leftx_current + width
+        win_xright_low   = rightx_current - width
+        win_xright_high  = rightx_current + width
+
+        # Draw the windows on the visualization image.
+        cv2.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0, 255, 0), 2)
+        cv2.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0, 255, 0), 2)
+
+        # Identify nonzero pixels in x and y with the window.
+        good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low)
+                          & (nonzerox < win_xleft_high)).nonzero()[0]
+        good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high)
+                           & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
+
+        # Append these indices to the list.
+        left_lane_indices.append(good_left_inds)
+        right_lane_indices.append(good_right_inds)
+
+        if len(good_left_inds) > minpix:
+            leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
+        if len(good_right_inds) > minpix:
+            rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
+
+    # Concatenate the indices.
+    left_lane_indices = np.concatenate(left_lane_indices)
+    right_lane_indices = np.concatenate(right_lane_indices)
+
+    # Extract the left and right indices.
+    leftx = nonzerox[left_lane_indices]
+    lefty = nonzeroy[left_lane_indices]
+    rightx = nonzerox[right_lane_indices]
+    righty = nonzeroy[right_lane_indices]
+
+    # Fit the points
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+    # print("HIstogram search", left_fit, right_fit)
+    points = [lefty, leftx, righty, rightx]
+    if visualize:
+        draw_lane_line(out_img, img.shape, points, (left_fit, right_fit))
+
+    return (points, (left_fit, right_fit))
+
+
+def draw_lane_line(img, shape, coordinates, fit_points):
+    """ Draw the lanes."""
+    global y_points
+    left_fit_params = fit_points[0]
+    right_fit_params = fit_points[1]
+    lfx = left_fit_params[0]*y_points**2 + left_fit_params[1]*y_points + left_fit_params[2]
+    rfx = right_fit_params[0]*y_points**2 + right_fit_params[1]*y_points + right_fit_params[2]
+
+    img[coordinates[0], coordinates[1]] = [255, 0, 0]
+    img[coordinates[2], coordinates[3]] = [0, 0, 255]
+    plt.imshow(img)
+    plt.plot(lfx, draw_lane_line, color='yellow')
+    plt.plot(rfx, draw_lane_line, color='yellow')
+    plt.xlim(0, 1280)
+    plt.ylim(720, 0)
+    plt.show()
+
+
+def locality_search(img, fit_points, visualize = False):
+    """
+    Do sliding window search based on previous frames.
+    :return:
+    """
+    nonzerox = np.array(img.nonzero()[1])
+    nonzeroy = np.array(img.nonzero()[0])
+    fp_left  = fit_points[0]
+    fp_right = fit_points[1]
+    print("Inside locality search: ", fit_points[0])
+
+    left_x_points = fp_left[0]*(nonzeroy**2) + fp_left[1]*(nonzeroy) + fp_left[2]
+    right_x_points = fp_right[0]*(nonzeroy**2) + fp_right[1]*(nonzeroy) + fp_right[2]
+    margin = 100
+
+    # determine the range to lookup for in the new frame based on the old coordinates.
+    left_lane_inds = ((nonzerox > (left_x_points - margin)) & (nonzerox < (left_x_points + margin)))
+    right_lane_inds = ((nonzerox > (right_x_points - margin)) & (nonzerox < (right_x_points + margin)))
+
+    # Extract points.
+    leftx = nonzerox[left_lane_inds]
+    lefty = nonzeroy[left_lane_inds]
+    rightx = nonzerox[right_lane_inds]
+    righty = nonzeroy[right_lane_inds]
+
+    # fit points.
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+    print("Locality search", left_fit, right_fit)
+
+    # Generate new sets of points.
+    gen_points = np.linspace(0, img.shape[0]-1, img.shape[0])
+    left_fitx = left_fit[0]*(y_points**2) + left_fit[1]*(y_points) + left_fit[2]
+    right_fitx = right_fit[0]*(y_points**2) + right_fit[1]*(y_points) + right_fit[2]
+    if visualize:
+        draw_lane_search_area(img, (left_lane_inds, right_lane_inds), (left_fitx, right_fitx), 100)
+    return ((leftx, lefty), (rightx, righty), (left_fitx, right_fitx))
+
+
+def search_lane_points(img, visualize = False):
+    """ Search for lane points based on previous frame, in case of multiple frame miss do a new histogram search."""
+
+
+def draw_lane_search_area(img, lane_point_indices, fit_points, margin):
+    """Visualize the range of search for the coordinates in the new image."""
+    global y_points
+    gen_points = np.linspace(0, img.shape[0] - 1, img.shape[0])
+    nonzeroy = np.array(img.nonzero()[0])
+    nonzerox = np.array(img.nonzero()[1])
+
+    output = np.dstack((img, img, img))*255
+    window_img = np.zeros_like(output)
+
+    # color the left and right coordinates.
+    output[nonzeroy[lane_point_indices[0]], nonzerox[lane_point_indices[0]]] = [255, 0, 0]
+    output[nonzeroy[lane_point_indices[1]], nonzerox[lane_point_indices[1]]] = [0, 0, 255]
+
+    # Generate point indicating the search area.
+    left_line_window_1 = np.array([np.transpose(np.vstack([fit_points[0] - margin, y_points]))])
+    left_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[0] + margin, y_points])))])
+    left_line_pts = np.hstack((left_line_window_1, left_line_window_2))
+
+    right_line_window_1 = np.array([np.transpose(np.vstack([fit_points[1] - margin, y_points]))])
+    right_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[1] + margin, y_points])))])
+    right_line_pts = np.hstack((right_line_window_1, right_line_window_2))
+
+    # Draw the search are on the blank image.
+    cv2.fillPoly(window_img, np.int_([left_line_pts]), (0, 255, 0))
+    cv2.fillPoly(window_img, np.int_([right_line_pts]), (0, 255, 0))
+    merged = cv2.addWeighted(output, 1, window_img, 0.4, 0)
+    plt.imshow(merged)
+    plt.plot(fit_points[0], y_points, color='yellow')
+    plt.plot(fit_points[1], y_points, color='yellow')
+    plt.xlim(0, 1280)
+    plt.ylim(720, 0)
+    plt.show()
+
+
+def calculate_curvature_and_center(img, left_points, right_points,fit_points, image_dim):
+    """Determine the curvature from lane points"""
+    x_m_per_pix  = 3.7/image_dim[1]
+    y_m_per_pix  = 30/image_dim[0]
+    global y_points
+    # x_m_per_pix = 3.7 / 700
+    # y_m_per_pix = 30 / 720
+    # Calculate Curvature corresponding to centre of image.
+    y_centre = img.shape[0] - img.shape[0]/2
+
+    vehicle_center = (fit_points[1][-1] - fit_points[0][-1])//2 # (Max Right fit - Max Left fit)/2
+    reference_center = (img.shape[1]//2)
+    pixel_deviation = reference_center - vehicle_center # Calculates the deviation of vehicle in terms of pixels.
+    deviation_in_m = pixel_deviation * x_m_per_pix
+
+    left_fit_cr  = np.polyfit(left_points[1], left_points[0], 2)
+    right_fit_cr = np.polyfit(right_points[1], right_points[0], 2)
+
+    l_curv = ((1 + (left_fit_cr[0] * y_centre + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
+    r_curv = ((1 + (right_fit_cr[0] * y_centre + right_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
+    return (l_curv, r_curv, deviation_in_m)
+
+
+def sanity_check_curvature(l_curv, r_curv):
+    """ Check if the curvature is in limits."""
+    check = True
+    # Check similarity of curvature.
+    if not -0.5 < l_curv/r_curv < 0.5:
+        check = False
+    # Check sanity of curvature.
+    if l_curv < 400 or r_curv < 400:
+        check = False
+    return check
+
+
+def lane_visualize(img, warped, fit_left, fit_right, minv, visualize= False):
+    """Visualize the detected lane lines."""
+    global y_points
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    print("warped image shape: --", warped.shape)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+    print("lane visualization: Left {0} --- Right{1}".format(fit_left.shape, y_points.shape))
+    pts_left  = np.array([np.transpose(np.vstack([fit_left, y_points]))])
+    pts_middle_left = np.array([np.flipud(np.transpose(np.vstack([(fit_left + fit_right)/2, y_points])))])
+    pts_middle_right = np.array([np.transpose(np.vstack([(fit_left + fit_right)/2, y_points]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([fit_right, y_points])))])
+    pts_1_halve = np.hstack((pts_left, pts_middle_left))
+    pts_2_halve = np.hstack((pts_middle_right, pts_right))
+    poly_arg_left = np.array(pts_1_halve)
+    poly_arg_right = np.array(pts_2_halve)
+    print("Fill poly shape--", poly_arg_left.shape)
+    cv2.fillPoly(color_warp, np.int_(poly_arg_left), (102, 255, 178))
+    cv2.fillPoly(color_warp, np.int_(poly_arg_right), (0, 204, 102))
+    pts_left = pts_left.astype(np.int32)
+    pts_middle = pts_middle_right.astype(np.int32)
+    pts_right = pts_right.astype(np.int32)
+    print("fit_left shape: ",pts_left, pts_left.shape)
+    cv2.polylines(color_warp, pts_left, False, (255, 51, 51), 3, cv2.LINE_AA)
+    cv2.polylines(color_warp, pts_middle, False, (204, 204, 0), 3, cv2.LINE_AA)
+    cv2.polylines(color_warp, pts_right, False, (255, 51, 51), 3, cv2.LINE_AA)
+    plt.imshow(color_warp)
+    plt.show()
+    print("Minv shape: {0} -- Color warp shape: {1}".format(minv.shape, color_warp.shape))
+    # Warp the image back and merge with stock image.
+    new_warp = cv2.warpPerspective(color_warp, minv, (warped.shape[1], warped.shape[0]))
+    print("New warped shape: -- ", new_warp.shape)
+    plt.imshow(new_warp)
+    plt.show()
+    result = cv2.addWeighted(img, 1, new_warp, 0.3, 0)
+    if visualize:
+        plt.imshow(result)
+        plt.show()
+    return result
+
+
+def draw_lane_and_text(image, warped, curvatures, lane_distance, fitpoints, minv):
+    """Draw the text and images"""
+    width = warped.shape[1]
+    height = warped.shape[0]
+    delta = 50
+
+    update_img = lane_visualize(image, warped, fitpoints[0], fitpoints[1], minv, True)
+    font = cv2.FONT_HERSHEY_COMPLEX_SMALL
+    left_curvature = "Left Curvature: " + str(curvatures[0])
+    right_curvature = "Right Curvature: " + str(curvatures[1])
+    lane_distance = "Delta:" + str(lane_distance)
+    cv2.putText(update_img,left_curvature, (0 + delta, 0 + delta), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
+    cv2.putText(update_img, right_curvature, (width - 400 - len(right_curvature), 0 + delta), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
+    cv2.putText(update_img, lane_distance, (width//2 - len(lane_distance), height//2), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
+    return update_img
+
+
+def pipeline(img):
+    """Coordinate the processing of clip."""
+    global condition
+    output = img
+    plt.imshow(img)
+    plt.show()
+    if condition['visualize']:
+        image = gradient_and_combine(img)
+        visualize_colorspace(img)
+        plt.imshow(img)
+        plt.show()
+    if condition['smoothen']:
+        output = cv2.GaussianBlur(output, (3, 3), 0)
+    dst = undistort_image(output)
+    if condition['sharpen']:
+        dst = sharpen_image(dst)
+    otp = mark_area_of_interest(dst)
+    warped, M, MInv = create_perspective_transform(otp)
+    if condition['visualize']:
+        plt.imshow(warped, cmap='gray')
+        plt.show()
+    opt = histogram_detect(warped)
+    args = locality_search(warped, opt[1], True)
+    output = calculate_curvature_and_center(img, args[0], args[1], args[2], img.shape)
+    if sanity_check_curvature(output[0], output[1]):
+        print("Curves meet the standards.")
+    result = draw_lane_and_text(img, warped, (output[0], output[1]), output[2], args[2], MInv) # Draw the lane area and text info.
+    plt.imshow(result)
+    plt.show()
+    return result
+
+
+def process_video(file):
+    """Process video file and output annotated video."""
+    output = "../output/output.mp4"
+    clip = VideoFileClip(file)
+    output_video = clip.fl_image(pipeline)
+    output_video.write_videofile(output, audio=False)
+
 def main():
 
-    global image
-    print("mtx", mtx)
-    print("dist", dist)
-    # image = gradient_and_combine()
-    # visualize_colorspace()
-    # plt.imshow(image)
-    # plt.show()
-    output = cv2.GaussianBlur(image, (3, 3), 0)
-    dst = undistort_image(image)
-    # codsnippet_from_udacity(dst)
-    # dst = sharpen_image(dst)
-    # output = create_merged_binary(dst, apply_gray=True)
-    # plt.imshow(output, cmap='gray')
-    # plt.show()
-    otp = detect_lane_lines(dst)
-    warped = create_perspective_transform(otp)
-    plt.imshow(warped, cmap='gray')
-    plt.show()
+    visualize = False
+    print("Starting video processing pipeline.")
+    process_video('../data/project_video.mp4')
 
 if __name__ == '__main__':
     main()
