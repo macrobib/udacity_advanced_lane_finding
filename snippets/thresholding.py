@@ -6,10 +6,16 @@ from scipy.signal import medfilt
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from moviepy.editor import VideoFileClip
-
+from collections import deque
 # image = cv2.imread('../examples/color-shadow-example.jpg')
 # image = cv2.imread('../examples/solidYellowCurve.jpg')
 
+
+prev_xLeft_values = deque(maxlen=11)
+prev_xRight_values = deque(maxlen=11)
+last_left_value = None
+last_right_value = None
+weights = None
 #Load the calibration paramters.
 data = pickle.load(open('../data/cam.p', 'rb'))
 mtx = data['mtx']
@@ -21,7 +27,7 @@ condition = {
 }
 
 
-def gradient_and_combine(image, s_thresh=(50, 100), sx_thresh=(10, 200)):
+def gradient_and_combine(image, s_thresh=(50, 100), sx_thresh=(10, 200), visualize = False):
     """Take gradient of the color channels and combine."""
     image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     image_hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
@@ -62,8 +68,9 @@ def gradient_and_combine(image, s_thresh=(50, 100), sx_thresh=(10, 200)):
     # Merge binary.
     mergeBinary = np.zeros_like(sxbinary)
     mergeBinary[(sxbinary == 1) | (svbinary == 1) | (sbinary == 1)] = 1
-    plt.imshow(mergeBinary, cmap='gray')
-    plt.show()
+    if visualize:
+        plt.imshow(mergeBinary, cmap='gray')
+        plt.show()
     color_binary =  np.dstack((np.zeros_like(sxbinary), sxbinary, sbinary))
     return color_binary
 
@@ -178,6 +185,7 @@ def visualize_colorspace(image):
 def vertices_area_of_interest(img):
     """Segment area of interest."""
     global y_points
+    global weights
     image = np.copy(img)
     width = image.shape[1]
     height = image.shape[0]
@@ -198,7 +206,11 @@ def vertices_area_of_interest(img):
     right_bot_inner = (x2_2 - 100, height)
     left_top_inner = (x1_2 + 20, y + 50)
     right_top_inner = (x2_1 - 20, y + 50)
-    y_points = np.linspace(0, img.shape[0], 101)
+    y_points = np.linspace(0, img.shape[0], 128)
+    w1 = np.array([0.8])
+    w2 = np.ones([10]) * 0.2/10
+    weights = np.append(w1, w2)
+
     vertices = np.array([[left_bot_outer, left_top_outer, right_top_outer,
                           right_bot_outer, right_bot_inner,
                           right_top_inner, left_top_inner, left_bot_inner ]], dtype=np.int32)
@@ -256,7 +268,7 @@ def create_perspective_transform(img, visualize=False):
     return warped, M , MInv
 
 
-def mask_region(img):
+def mask_region(img, visualize= False):
     """
     Mask the ROI in the image.
     :param img: Input Image.
@@ -266,8 +278,9 @@ def mask_region(img):
     binary_mask = np.zeros_like(img)
     vertices = vertices_area_of_interest(img)
     cv2.polylines(temp_image, vertices, True, (0, 255, 255))
-    plt.imshow(temp_image)
-    plt.show()
+    if visualize:
+        plt.imshow(temp_image)
+        plt.show()
     color = (255,)
     cv2.fillPoly(binary_mask, vertices, color)
     masked_image = cv2.bitwise_and(img, binary_mask)
@@ -372,11 +385,13 @@ def histogram_detect(img, visualize = False):
     histogram = np.sum(img[img.shape[0]//2:, :], axis=0)
     # https://gist.github.com/jul/3794506
     histogram = medfilt(histogram, [41]) # Smoothen the histogram values.
-    plt.plot(histogram)
-    plt.show()
+    if visualize:
+        plt.plot(histogram)
+        plt.show()
     out_img = np.dstack((img, img, img)) * 255
-    plt.imshow(out_img)
-    plt.show()
+    if visualize:
+        plt.imshow(out_img)
+        plt.show()
 
     midpoint = np.int(histogram.shape[0]//2)
     leftx_base = np.argmax(histogram[:midpoint])
@@ -441,6 +456,7 @@ def histogram_detect(img, visualize = False):
     # Fit the points
     left_fit = np.polyfit(lefty, leftx, 2)
     right_fit = np.polyfit(righty, rightx, 2)
+
     # print("HIstogram search", left_fit, right_fit)
     points = [lefty, leftx, righty, rightx]
     if visualize:
@@ -472,11 +488,14 @@ def locality_search(img, fit_points, visualize = False):
     Do sliding window search based on previous frames.
     :return:
     """
+    global weights
+    global last_left_value
+    global last_right_value
     nonzerox = np.array(img.nonzero()[1])
     nonzeroy = np.array(img.nonzero()[0])
     fp_left  = fit_points[0]
     fp_right = fit_points[1]
-    print("Inside locality search: ", fit_points[0])
+    # print("Inside locality search: ", fit_points[0])
 
     left_x_points = fp_left[0]*(nonzeroy**2) + fp_left[1]*(nonzeroy) + fp_left[2]
     right_x_points = fp_right[0]*(nonzeroy**2) + fp_right[1]*(nonzeroy) + fp_right[2]
@@ -495,12 +514,23 @@ def locality_search(img, fit_points, visualize = False):
     # fit points.
     left_fit = np.polyfit(lefty, leftx, 2)
     right_fit = np.polyfit(righty, rightx, 2)
-    print("Locality search", left_fit, right_fit)
+    # print("Locality search", left_fit, right_fit)
 
     # Generate new sets of points.
     gen_points = np.linspace(0, img.shape[0]-1, img.shape[0])
     left_fitx = left_fit[0]*(y_points**2) + left_fit[1]*(y_points) + left_fit[2]
     right_fitx = right_fit[0]*(y_points**2) + right_fit[1]*(y_points) + right_fit[2]
+
+    prev_xLeft_values.appendleft(left_fitx)
+    prev_xRight_values.appendleft(right_fitx)
+    if len(prev_xLeft_values) == 11:
+        left_fitx = np.average(np.array(prev_xLeft_values), 0, weights=weights)
+    if len(prev_xRight_values) == 11:
+        right_fitx = np.average(np.array(prev_xRight_values), 0, weights=weights)
+        # print(prev_xRight_values)
+
+    # Weighted averaging:
+    print("Shape: ", np.array(prev_xLeft_values).shape)
     if visualize:
         draw_lane_search_area(img, (left_lane_inds, right_lane_inds), (left_fitx, right_fitx), 100)
     return ((leftx, lefty), (rightx, righty), (left_fitx, right_fitx))
@@ -560,8 +590,8 @@ def calculate_curvature_and_center(img, left_points, right_points,fit_points, im
     pixel_deviation = reference_center - vehicle_center # Calculates the deviation of vehicle in terms of pixels.
     deviation_in_m = pixel_deviation * x_m_per_pix
 
-    left_fit_cr  = np.polyfit(left_points[1], left_points[0], 2)
-    right_fit_cr = np.polyfit(right_points[1], right_points[0], 2)
+    left_fit_cr  = np.polyfit(left_points[1] * y_m_per_pix, left_points[0] * x_m_per_pix, 2)
+    right_fit_cr = np.polyfit(right_points[1] * y_m_per_pix, right_points[0] * x_m_per_pix, 2)
 
     l_curv = ((1 + (left_fit_cr[0] * y_centre + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
     r_curv = ((1 + (right_fit_cr[0] * y_centre + right_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
@@ -595,24 +625,24 @@ def lane_visualize(img, warped, fit_left, fit_right, minv, visualize= False):
     pts_2_halve = np.hstack((pts_middle_right, pts_right))
     poly_arg_left = np.array(pts_1_halve)
     poly_arg_right = np.array(pts_2_halve)
-    print("Fill poly shape--", poly_arg_left.shape)
     cv2.fillPoly(color_warp, np.int_(poly_arg_left), (102, 255, 178))
     cv2.fillPoly(color_warp, np.int_(poly_arg_right), (0, 204, 102))
     pts_left = pts_left.astype(np.int32)
     pts_middle = pts_middle_right.astype(np.int32)
     pts_right = pts_right.astype(np.int32)
-    print("fit_left shape: ",pts_left, pts_left.shape)
     cv2.polylines(color_warp, pts_left, False, (255, 51, 51), 3, cv2.LINE_AA)
     cv2.polylines(color_warp, pts_middle, False, (204, 204, 0), 3, cv2.LINE_AA)
     cv2.polylines(color_warp, pts_right, False, (255, 51, 51), 3, cv2.LINE_AA)
-    plt.imshow(color_warp)
-    plt.show()
+    if visualize:
+        plt.imshow(color_warp)
+        plt.show()
     print("Minv shape: {0} -- Color warp shape: {1}".format(minv.shape, color_warp.shape))
     # Warp the image back and merge with stock image.
     new_warp = cv2.warpPerspective(color_warp, minv, (warped.shape[1], warped.shape[0]))
     print("New warped shape: -- ", new_warp.shape)
-    plt.imshow(new_warp)
-    plt.show()
+    if visualize:
+        plt.imshow(new_warp)
+        plt.show()
     result = cv2.addWeighted(img, 1, new_warp, 0.3, 0)
     if visualize:
         plt.imshow(result)
@@ -626,14 +656,14 @@ def draw_lane_and_text(image, warped, curvatures, lane_distance, fitpoints, minv
     height = warped.shape[0]
     delta = 50
 
-    update_img = lane_visualize(image, warped, fitpoints[0], fitpoints[1], minv, True)
+    update_img = lane_visualize(image, warped, fitpoints[0], fitpoints[1], minv, False)
     font = cv2.FONT_HERSHEY_COMPLEX_SMALL
-    left_curvature = "Left Curvature: " + str(curvatures[0])
-    right_curvature = "Right Curvature: " + str(curvatures[1])
-    lane_distance = "Delta:" + str(lane_distance)
+    left_curvature = "Left Curvature: " + str(round(curvatures[0], 2))
+    right_curvature = "Right Curvature: " + str(round(curvatures[1], 2))
+    lane_distance = "Lane Dev " + str(round(lane_distance, 3))
     cv2.putText(update_img,left_curvature, (0 + delta, 0 + delta), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
     cv2.putText(update_img, right_curvature, (width - 400 - len(right_curvature), 0 + delta), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
-    cv2.putText(update_img, lane_distance, (width//2 - len(lane_distance), height//2), font, 0.8, (51, 255, 153), 1, cv2.LINE_AA)
+    cv2.putText(update_img, lane_distance, (width//2 - len(lane_distance) - 10, height - 150), font, 0.7, (51, 255, 153), 1, cv2.LINE_AA)
     return update_img
 
 
@@ -641,6 +671,7 @@ def pipeline(img):
     """Coordinate the processing of clip."""
     global condition
     output = img
+    print(img.shape)
     plt.imshow(img)
     plt.show()
     if condition['visualize']:
@@ -659,19 +690,19 @@ def pipeline(img):
         plt.imshow(warped, cmap='gray')
         plt.show()
     opt = histogram_detect(warped)
-    args = locality_search(warped, opt[1], True)
+    args = locality_search(warped, opt[1], False)
     output = calculate_curvature_and_center(img, args[0], args[1], args[2], img.shape)
     if sanity_check_curvature(output[0], output[1]):
         print("Curves meet the standards.")
     result = draw_lane_and_text(img, warped, (output[0], output[1]), output[2], args[2], MInv) # Draw the lane area and text info.
-    plt.imshow(result)
-    plt.show()
+    # plt.imshow(result)
+    # plt.show()
     return result
 
 
 def process_video(file):
     """Process video file and output annotated video."""
-    output = "../output/output.mp4"
+    output = "../output/project_video.mp4"
     clip = VideoFileClip(file)
     output_video = clip.fl_image(pipeline)
     output_video.write_videofile(output, audio=False)
@@ -680,7 +711,7 @@ def main():
 
     visualize = False
     print("Starting video processing pipeline.")
-    process_video('../data/project_video.mp4')
+    process_video("../videos/project_video.mp4")
 
 if __name__ == '__main__':
     main()
