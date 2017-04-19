@@ -13,6 +13,7 @@ class visualize:
  # zero image with gray scale coordinates.
         self.color_mask = np.dstack((self.gray_mask, self.gray_mask ,self.gray_mask))
         self.enable_debug = enable
+        self.y_points = np.linspace(0, self.image_shape[0], 128)  # Points in y axis for visualization.
 
         # Font
         self.font = cv2.FONT_HERSHEY_COMPLEX_SMALL # Font family
@@ -58,24 +59,22 @@ class visualize:
 
     def draw_lane_line(self, img, shape, coordinates, fit_points):
         """ Draw the lanes."""
-        global y_points
         left_fit_params = fit_points[0]
         right_fit_params = fit_points[1]
-        lfx = left_fit_params[0] * y_points ** 2 + left_fit_params[1] * y_points + left_fit_params[2]
-        rfx = right_fit_params[0] * y_points ** 2 + right_fit_params[1] * y_points + right_fit_params[2]
+        lfx = left_fit_params[0] * self.y_points ** 2 + left_fit_params[1] * self.y_points + left_fit_params[2]
+        rfx = right_fit_params[0] * self.y_points ** 2 + right_fit_params[1] * self.y_points + right_fit_params[2]
 
         img[coordinates[0], coordinates[1]] = [255, 0, 0]
         img[coordinates[2], coordinates[3]] = [0, 0, 255]
         plt.imshow(img)
-        plt.plot(lfx, y_points, color='yellow')
-        plt.plot(rfx, y_points, color='yellow')
+        plt.plot(lfx, self.y_points, color='yellow')
+        plt.plot(rfx, self.y_points, color='yellow')
         plt.xlim(0, 1280)
         plt.ylim(720, 0)
         plt.show()
 
     def draw_lane_search_area(self, img, lane_point_indices, fit_points, margin):
         """Visualize the range of search for the coordinates in the new image."""
-        global y_points
         gen_points = np.linspace(0, img.shape[0] - 1, img.shape[0])
         nonzeroy = np.array(img.nonzero()[0])
         nonzerox = np.array(img.nonzero()[1])
@@ -88,12 +87,12 @@ class visualize:
         output[nonzeroy[lane_point_indices[1]], nonzerox[lane_point_indices[1]]] = [0, 0, 255]
 
         # Generate point indicating the search area.
-        left_line_window_1 = np.array([np.transpose(np.vstack([fit_points[0] - margin, y_points]))])
-        left_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[0] + margin, y_points])))])
+        left_line_window_1 = np.array([np.transpose(np.vstack([fit_points[0] - margin, self.y_points]))])
+        left_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[0] + margin, self.y_points])))])
         left_line_pts = np.hstack((left_line_window_1, left_line_window_2))
 
-        right_line_window_1 = np.array([np.transpose(np.vstack([fit_points[1] - margin, y_points]))])
-        right_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[1] + margin, y_points])))])
+        right_line_window_1 = np.array([np.transpose(np.vstack([fit_points[1] - margin, self.y_points]))])
+        right_line_window_2 = np.array([np.flipud(np.transpose(np.vstack([fit_points[1] + margin, self.y_points])))])
         right_line_pts = np.hstack((right_line_window_1, right_line_window_2))
 
         # Draw the search are on the blank image.
@@ -101,44 +100,37 @@ class visualize:
         cv2.fillPoly(window_img, np.int_([right_line_pts]), (0, 255, 0))
         merged = cv2.addWeighted(output, 1, window_img, 0.4, 0)
         plt.imshow(merged)
-        plt.plot(fit_points[0], y_points, color='yellow')
-        plt.plot(fit_points[1], y_points, color='yellow')
+        plt.plot(fit_points[0], self.y_points, color='yellow')
+        plt.plot(fit_points[1], self.y_points, color='yellow')
         plt.xlim(0, 1280)
         plt.ylim(720, 0)
         plt.show()
 
     def lane_visualize(self, img, warped, fit_left, fit_right, minv, visualize=False):
         """Visualize the detected lane lines."""
-        global y_points
         warp_zero = np.zeros_like(warped).astype(np.uint8)
-        print("warped image shape: --", warped.shape)
         color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
-        print("lane visualization: Left {0} --- Right{1}".format(fit_left.shape, y_points.shape))
-        pts_left = np.array([np.transpose(np.vstack([fit_left, y_points]))])
-        pts_middle_left = np.array([np.flipud(np.transpose(np.vstack([(fit_left + fit_right) / 2, y_points])))])
-        pts_middle_right = np.array([np.transpose(np.vstack([(fit_left + fit_right) / 2, y_points]))])
-        pts_right = np.array([np.flipud(np.transpose(np.vstack([fit_right, y_points])))])
+        pts_left = np.array([np.transpose(np.vstack([fit_left, self.y_points]))])
+        pts_middle_left = np.array([np.flipud(np.transpose(np.vstack([(fit_left + fit_right) / 2, self.y_points])))])
+        pts_middle_right = np.array([np.transpose(np.vstack([(fit_left + fit_right) / 2, self.y_points]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([fit_right, self.y_points])))])
         pts_1_halve = np.hstack((pts_left, pts_middle_left))
         pts_2_halve = np.hstack((pts_middle_right, pts_right))
         poly_arg_left = np.array(pts_1_halve)
         poly_arg_right = np.array(pts_2_halve)
-        print("Fill poly shape--", poly_arg_left.shape)
         cv2.fillPoly(color_warp, np.int_(poly_arg_left), self.left_lane_color)
         cv2.fillPoly(color_warp, np.int_(poly_arg_right), self.right_lane_color)
         pts_left = pts_left.astype(np.int32)
         pts_middle = pts_middle_right.astype(np.int32)
         pts_right = pts_right.astype(np.int32)
-        print("fit_left shape: ", pts_left, pts_left.shape)
         cv2.polylines(color_warp, pts_left, False, self.edge_line_color, 3, self.line_tp)
         cv2.polylines(color_warp, pts_middle, False, self.center_line_color, 3, self.line_tp)
         cv2.polylines(color_warp, pts_right, False, self.edge_line_color, 3, self.line_tp)
         if visualize:
             plt.imshow(color_warp)
             plt.show()
-        print("Minv shape: {0} -- Color warp shape: {1}".format(minv.shape, color_warp.shape))
         # Warp the image back and merge with stock image.
         new_warp = cv2.warpPerspective(color_warp, minv, (warped.shape[1], warped.shape[0]))
-        print("New warped shape: -- ", new_warp.shape)
         if visualize:
             plt.imshow(new_warp)
             plt.show()
@@ -148,19 +140,19 @@ class visualize:
             plt.show()
         return result
 
-    def draw_lane_and_text(self, image, warped, curvatures, lane_distance, lane_points, minv):
+    def draw_lane_and_text(self, image, warped, curvatures, vehicle_offset, lane_points, minv):
         """Draw the text and images"""
         width = self.image_shape[1]
         height = self.image_shape[0]
         delta = 50 # arbitrary value to adjust text position.
 
-        update_img = self.lane_visualize(image, warped, lane_points[0], lane_points[1], minv, True)
-        left_curvature_str = "Left Curvature: " + str(curvatures[0])
-        right_curvature_str = "Right Curvature: " + str(curvatures[1])
-        lane_string = "Delta:" + str(lane_distance)
+        update_img = self.lane_visualize(image, warped, lane_points[0], lane_points[1], minv, False)
+        left_curvature_str = "Left Curvature: " + str(round(curvatures[0], 2))
+        right_curvature_str = "Right Curvature: " + str(round(curvatures[1], 2))
+        lane_string = "Delta:" + str(round(vehicle_offset, 2))
         cv2.putText(update_img, left_curvature_str, (0 + delta, 0 + delta), self.font, self.font_th, self.font_color, 1, self.line_tp)
         cv2.putText(update_img, right_curvature_str, (width - 400 - len(right_curvature_str), 0 + delta), self.font, self.font_th,
                     self.font_color, 1, self.line_tp)
-        cv2.putText(update_img, lane_distance, (width // 2 - len(lane_string), height // 2), self.font, self.font_th,
+        cv2.putText(update_img, lane_string, (width // 2 - len(lane_string) - 10, height - 150), self.font, self.font_th,
                     self.font_color, 1, self.line_tp)
         return update_img

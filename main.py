@@ -20,7 +20,7 @@ display_image = False
 condition = {
     'visualize': False,
     'smoothen' : False,
-    'sharpen'  : False
+    'sharpen'  : True
 }
 
 def pipeline(img):
@@ -30,7 +30,7 @@ def pipeline(img):
     global condition
     global lane
     img_copy = img
-    vis.draw_img(img)
+    # vis.draw_img(img)
     if condition['visualize']:
         image = vis.gradient_and_combine(img)
         vis.visualize_colorspace(img)
@@ -46,16 +46,15 @@ def pipeline(img):
     if condition['visualize']:
         vis.draw_img(warped, True)
 
-    curvature = lane.get_curvature()
+    curvature = lane.get_curvatures()
     lane_points = lane.get_current_lane_points()
-    lane_distance = lane.get_lane_distance()
+    vehicle_offset = lane.get_vehicle_offset()
     MInv = imgh.get_minv()
 
-    output_image = vis.draw_lane_and_text(img, warped, curvature, lane_distance, lane_points,
-                                MInv)  # Draw the lane area and text info.
+    output_image = vis.draw_lane_and_text(img, warped, curvature, vehicle_offset, lane_points, MInv)  # Draw the lane area and text info.
     if display_image:
         vis.draw_img(output_image)
-    return display_image
+    return output_image
 
 
 def main():
@@ -73,3 +72,6 @@ def main():
     clip = VideoFileClip(input)
     output_video = clip.fl_image(pipeline)
     output_video.write_videofile(output, audio=False)
+
+if __name__ == '__main__':
+    main()

@@ -4,31 +4,39 @@ import numpy as np
 from src.visualize import visualize as viz
 from scipy.signal import medfilt
 from collections import deque
+import matplotlib.pyplot as plt
 
 
 class lanes:
 
     def __init__(self, image_dim = None):
         self.detected = False
-        self.dropped_frames = 6
+        self.dropped_frames = 11 # Initialize with max dropped frames.
         self.image_dim = image_dim
         self.y_centre = self.image_dim[0] - self.image_dim[0] / 2
 
-        self.recent_x_left = deque(maxlen=11)
-        self.recent_x_right = deque(maxlen=11)
+        self.recent_x_left = deque(maxlen=6)
+        self.recent_x_right = deque(maxlen=6)
 
         self.current_fit_left = None
         self.current_fit_right = None
 
+        self.current_left_lane = None
+        self.current_right_lane = None
+
+
+
         self.curvature_right = None
         self.curvature_left = None
+        self.curvature_right_prev = None
+        self.curvature_left_prev = None
 
         self.xpoints_left = None
         self.xpoints_right = None
 
         self.vehicle_offset = 0
-        w1 = np.array([0.8])
-        w2 = np.ones([10]) * 0.2 / 10
+        w1 = np.array([0.7])
+        w2 = np.ones([5]) * 0.3 / 5
         self.weights = np.append(w1, w2)
 
         if image_dim:
@@ -39,22 +47,43 @@ class lanes:
             self.y_m_per_pix = 30 / 720
         self.y_points = np.linspace(0, image_dim[0], 128) # Points in y axis for curve fitting.
 
-    def _update_lane_points(self, left, right):
+    def _update_lane_points(self, left, right, left_fit, right_fit):
         """Update the new lane points and update average."""
-        if len(self.recent_x_left) == 11:
-            self.recent_x_left.append(left)
-            self.current_fit_left = np.average(np.array(self.recent_x_left), 0, weights=self.weights)
-        if len(self.recent_x_right) == 11:
-            self.recent_x_right.append(right)
-            self.current_fit_right = np.average(np.array(self.recent_x_right), 0, weights=self.weights)
+        self.current_fit_left = left_fit
+        self.current_fit_right = right_fit
+
+        if len(self.recent_x_left) == 6:
+            self.recent_x_left.appendleft(left)
+            self.current_left_lane = np.average(np.array(self.recent_x_left), 0, weights=self.weights)
+        else:
+            self.recent_x_left.appendleft(left)
+            self.current_left_lane = left
+        if len(self.recent_x_right) == 6:
+            self.recent_x_right.appendleft(right)
+            self.current_right_lane = np.average(np.array(self.recent_x_right), 0, weights=self.weights)
+        else:
+            self.recent_x_right.appendleft(right)
+            self.current_right_lane = right
 
     def _update_curvatures(self, l_curv, r_curv):
+        if self.curvature_left_prev:
+            self.curvature_left_prev = self.curvature_left
+        else:
+            self.curvature_left_prev = l_curv
+        if self.curvature_right_prev:
+            self.curvature_right_prev = self.curvature_right
+        else:
+            self.curvature_right_prev = r_curv
         self.curvature_left = l_curv
         self.curvature_right = r_curv
 
     def get_curvatures(self):
         """Get left and right curvatures."""
         return (self.curvature_left, self.curvature_right)
+
+    def get_current_lane_points(self):
+        """Current lane positions."""
+        return (self.current_left_lane, self.current_right_lane)
 
     def get_vehicle_offset(self):
         return self.vehicle_offset
@@ -63,7 +92,7 @@ class lanes:
         """ Find peaks in histogram in the binary image."""
         width = 100 # Width of the window.
         minpix = 50 # Minimum number of pixels found in recenter window.
-
+        print("histogram detect.")
         histogram = np.sum(img[img.shape[0] // 2:, :], axis=0)
         # https://gist.github.com/jul/3794506
         histogram = medfilt(histogram, [41])  # Smoothen the histogram values.
@@ -99,8 +128,8 @@ class lanes:
             win_xright_high = rightx_current + width
 
             # Draw the windows on the visualization image.
-            cv2.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0, 255, 0), 2)
-            cv2.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0, 255, 0), 2)
+            # cv2.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0, 255, 0), 2)
+            # cv2.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0, 255, 0), 2)
 
             # Identify nonzero pixels in x and y with the window.
             good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low)
@@ -131,22 +160,19 @@ class lanes:
         left_fit = np.polyfit(lefty, leftx, 2)
         right_fit = np.polyfit(righty, rightx, 2)
 
-        xpoints_left = left_fit[0] * (self.y_points ** 2) + left_fit[1] * (self.y_points) + left_fit[2]
-        xpoints_right = right_fit[0] * (self.y_points ** 2) + right_fit[1] * (self.y_points) + right_fit[2]
-
-        if xpoints_left is None or xpoints_right is None:
+        new_left_x_points = left_fit[0] * (self.y_points ** 2) + left_fit[1] * (self.y_points) + left_fit[2]
+        new_right_x_points = right_fit[0] * (self.y_points ** 2) + right_fit[1] * (self.y_points) + right_fit[2]
+        self.xpoints_left = new_left_x_points
+        self.xpoints_right = new_right_x_points
+        if new_left_x_points is None or new_right_x_points is None:
             self.detected = False
             self.dropped_frames += 1
-            self.xpoints_left = None
-            self.xpoints_right = None
         else:
             self.detected = True
-            self.xpoints_left = xpoints_left
-            self.xpoints_right = xpoints_right
-            params = self.calculate_curvature(img, (leftx, lefty), (rightx, righty))
+            params = self.calculate_curvature((leftx, lefty), (rightx, righty))
             if self.sanity_check_curvature(params[0], params[1]):
-                self.calculate_center_offset((left_fit, right_fit))
-                self._update_lane_points(left_fit, right_fit)
+                self.calculate_center_offset((new_left_x_points, new_left_x_points))
+                self._update_lane_points(new_left_x_points, new_right_x_points, left_fit, right_fit)
 
     def locality_search(self, img):
         """
@@ -160,7 +186,8 @@ class lanes:
 
         left_x_points = fp_left[0] * (nonzeroy ** 2) + fp_left[1] * (nonzeroy) + fp_left[2]
         right_x_points = fp_right[0] * (nonzeroy ** 2) + fp_right[1] * (nonzeroy) + fp_right[2]
-        margin = 100
+        # right_x_points = right_x_points[::-1]
+        margin = 200
 
         # determine the range to lookup for in the new frame based on the old coordinates.
         left_lane_inds = ((nonzerox > (left_x_points - margin)) & (nonzerox < (left_x_points + margin)))
@@ -172,25 +199,23 @@ class lanes:
         rightx = nonzerox[right_lane_inds]
         righty = nonzeroy[right_lane_inds]
 
-        # fit points.
-        left_fit = np.polyfit(lefty, leftx, 2)
-        right_fit = np.polyfit(righty, rightx, 2)
-        print("Locality search", left_fit, right_fit)
-
-        # Generate new sets of points.
-        left_fit_x = left_fit[0] * (self.y_points ** 2) + left_fit[1] * (self.y_points) + left_fit[2]
-        right_fit_x = right_fit[0] * (self.y_points ** 2) + right_fit[1] * (self.y_points) + right_fit[2]
-        if left_fit_x is None or right_fit_x is None:
+        if leftx is None or rightx is None or lefty is None or righty is None:
             self.detected = False
             self.dropped_frames += 1
             self.xpoints_left = None
             self.xpoints_right = None
         else:
+            # Generate new sets of points.
+            # fit points.
+            left_fit = np.polyfit(lefty, leftx, 2)
+            right_fit = np.polyfit(righty, rightx, 2)
+            left_fit_x = left_fit[0] * (self.y_points ** 2) + left_fit[1] * (self.y_points) + left_fit[2]
+            right_fit_x = right_fit[0] * (self.y_points ** 2) + right_fit[1] * (self.y_points) + right_fit[2]
             self.detected = True
             params = self.calculate_curvature((leftx, lefty), (rightx, righty))
             if self.sanity_check_curvature(params[0], params[1]):
                 self.calculate_center_offset((left_fit_x, right_fit_x))
-                self._update_lane_points(left_fit_x, right_fit_x)
+                self._update_lane_points(left_fit_x, right_fit_x, left_fit, right_fit)
         #     draw_lane_search_area(img, (left_lane_inds, right_lane_inds), (left_fitx, right_fitx), 100)
 
     def calculate_center_offset(self, fit_points):
@@ -198,6 +223,7 @@ class lanes:
         vehicle_center = (fit_points[1][-1] - fit_points[0][-1]) // 2  # (Max Right fit - Max Left fit)/2
         reference_center = (self.image_dim[1] // 2)
         pixel_deviation = reference_center - vehicle_center  # Calculates the deviation of vehicle in terms of pixels.
+        self.vehicle_offset = pixel_deviation * self.x_m_per_pix
 
     def calculate_curvature(self, left_points, right_points):
         """Determine the curvature from lane points"""
@@ -214,17 +240,21 @@ class lanes:
     def sanity_check_curvature(self, l_curv, r_curv):
         """ Check if the curvature is in limits."""
         check = True
-        # Check similarity of curvature.
-        if not -0.5 < l_curv/r_curv < 0.5:
-            check = False
         # Check sanity of curvature.
-        if l_curv < 400 or r_curv < 400:
+        if l_curv < 600 or r_curv < 600:
             check = False
 
-        if l_curv > 1500 or r_curv > 1500:
+        if l_curv > 1300 or r_curv > 1300:
             check = False
+
         if check:
             self._update_curvatures(l_curv, r_curv)
+
+        curv_diff_l = (self.curvature_left - self.curvature_left_prev)/self.curvature_left_prev
+        curv_diff_r = (self.curvature_right - self.curvature_right_prev)/self.curvature_right_prev
+
+        if abs(curv_diff_l) > 0.05 or abs(curv_diff_r) > 0.05:
+            check = False
         return check
 
     def pipeline(self, img):

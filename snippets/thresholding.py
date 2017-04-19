@@ -268,22 +268,26 @@ def create_perspective_transform(img, visualize=False):
     return warped, M , MInv
 
 
-def mask_region(img, visualize= False):
+def mask_region(img, visualize= True):
     """
     Mask the ROI in the image.
     :param img: Input Image.
     :return: Binary image with region mask.
     """
+    print("Mask region.")
     temp_image = np.copy(img)
     binary_mask = np.zeros_like(img)
     vertices = vertices_area_of_interest(img)
     cv2.polylines(temp_image, vertices, True, (0, 255, 255))
     if visualize:
+        print("visualize")
         plt.imshow(temp_image)
         plt.show()
     color = (255,)
     cv2.fillPoly(binary_mask, vertices, color)
     masked_image = cv2.bitwise_and(img, binary_mask)
+    plt.imshow(masked_image)
+    plt.show()
     return masked_image
 
 def undistort_image(img):
@@ -322,7 +326,7 @@ def create_merged_binary(image, apply_gray=False):
 def mark_area_of_interest(img, visualize=False):
     # binary_image = create_merged_binary(img, apply_gray=True)
     binary_image = binarize_image(img)
-    output = mask_region(binary_image)
+    output = mask_region(binary_image, True)
     if visualize:
         f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
         f.tight_layout()
@@ -531,8 +535,8 @@ def locality_search(img, fit_points, visualize = False):
 
     # Weighted averaging:
     print("Shape: ", np.array(prev_xLeft_values).shape)
-    if visualize:
-        draw_lane_search_area(img, (left_lane_inds, right_lane_inds), (left_fitx, right_fitx), 100)
+    # if visualize:
+    #     draw_lane_search_area(img, (left_lane_inds, right_lane_inds), (left_fitx, right_fitx), 100)
     return ((leftx, lefty), (rightx, righty), (left_fitx, right_fitx))
 
 
@@ -695,8 +699,8 @@ def pipeline(img):
     if sanity_check_curvature(output[0], output[1]):
         print("Curves meet the standards.")
     result = draw_lane_and_text(img, warped, (output[0], output[1]), output[2], args[2], MInv) # Draw the lane area and text info.
-    # plt.imshow(result)
-    # plt.show()
+    plt.imshow(result)
+    plt.show()
     return result
 
 

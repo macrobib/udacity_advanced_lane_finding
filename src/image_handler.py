@@ -60,10 +60,6 @@ class ImageHandler:
         s_binary = np.zeros_like(s_channel)
         s_binary[(s_channel >= self.channel_thresh_min) & (s_channel <= self.channel_thresh_max)] = 1
 
-        # Stack each channel to view their individual contributions in green and blue respectively
-        # This returns a stack of the two binary images, whose components you can see as different colors
-        color_binary = np.dstack((np.zeros_like(sxbinary), sxbinary, s_binary))
-
         # Combine the two binary thresholds
         combined_binary = np.zeros_like(sxbinary)
         combined_binary[(s_binary == 1) | (sxbinary == 1)] = 1
@@ -82,7 +78,6 @@ class ImageHandler:
     def segment_area_of_interest(self, img = None):
         """Segment area of interest."""
         image = np.copy(img)
-        print("Image shape: ", image.shape)
         width = image.shape[1]
         height = image.shape[0]
 
@@ -97,33 +92,25 @@ class ImageHandler:
         right_top_outer = (x2_1, y)
 
         # Remove artifacts from center.
-        left_bot_inner = (x1_1 + 100, height)
-        right_bot_inner = (x2_2 - 100, height)
+        left_bot_inner = (x1_1 + 200, height)
+        right_bot_inner = (x2_2 - 200, height)
         left_top_inner = (x1_2 + 20, y + 50)
         right_top_inner = (x2_1 - 20, y + 50)
-
         vertices = np.array([[left_bot_outer, left_top_outer, right_top_outer,
                               right_bot_outer, right_bot_inner,
                               right_top_inner, left_top_inner, left_bot_inner]], dtype=np.int32)
         return vertices
 
-    def mask_region(self, image=None):
+    def mask_region(self, image):
         """ Mask a specific region of image. """
-        if image:
-            temp_image = np.copy(image)
-            binary_mask = np.zeros_like(image)
-            vertices = self.segment_area_of_interest(image)
-            poly_vertices = vertices.reshape((-1, 1, 2))
-            cv2.polylines(temp_image, vertices, True, (0, 255, 255))
-            plt.imshow(temp_image)
-            plt.show()
-            color = (255,)
-            print(vertices)
-            cv2.fillPoly(binary_mask, vertices, color)
-            masked_image = cv2.bitwise_and(image, binary_mask)
-            return masked_image
-        else:
-            raise FileNotFoundError
+        temp_image = np.copy(image)
+        binary_mask = np.zeros_like(image)
+        vertices = self.segment_area_of_interest(image)
+        cv2.polylines(temp_image, vertices, True, (0, 255, 255))
+        color = (255,)
+        cv2.fillPoly(binary_mask, vertices, color)
+        masked_image = cv2.bitwise_and(image, binary_mask)
+        return masked_image
 
     def mark_area_of_interest(self, img):
         # binary_image = create_merged_binary(img, apply_gray=True)
@@ -178,7 +165,6 @@ class ImageHandler:
             self.M = cv2.getPerspectiveTransform(arg_src, dst)
             self.MInv = cv2.getPerspectiveTransform(dst, arg_src)
         warped = cv2.warpPerspective(output, self.M, (width, height))
-        print("Warped dimension: - ", warped.shape[0])
         return warped
 
     def pipeline(self, img):
