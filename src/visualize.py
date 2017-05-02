@@ -146,7 +146,7 @@ class visualize:
         height = self.image_shape[0]
         delta = 50 # arbitrary value to adjust text position.
 
-        update_img = self.lane_visualize(image, warped, lane_points[0], lane_points[1], minv, False)
+        update_img = self.lane_visualize(image, warped, lane_points[0], lane_points[1], minv, True)
         left_curvature_str = "Left Curvature: " + str(round(curvatures[0], 2))
         right_curvature_str = "Right Curvature: " + str(round(curvatures[1], 2))
         lane_string = "Delta:" + str(round(vehicle_offset, 2))

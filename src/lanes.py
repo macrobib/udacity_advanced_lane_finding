@@ -24,8 +24,6 @@ class lanes:
         self.current_left_lane = None
         self.current_right_lane = None
 
-
-
         self.curvature_right = None
         self.curvature_left = None
         self.curvature_right_prev = None
@@ -88,18 +86,77 @@ class lanes:
     def get_vehicle_offset(self):
         return self.vehicle_offset
 
+
+    def calculate_top_bottom_curv(self, left_x, left_y, right_x, right_y):
+        """Compute the slope of top and bottom halves of the lines detected.
+        """
+        right_len = len(left_y)
+        left_len = len(left_x)
+        left_top_x = left_x[left_len//2: ]
+        right_top_x = right_x[right_len//2: ]
+        left_bottom_x = left_x[: left_len//2]
+        right_bottom_x = right_x[: right_len//2]
+        curvature_sanity = None
+        left_fit = None
+        right_fit = None
+
+        left_top_y = left_y[left_len // 2:]
+        right_top_y = right_y[right_len // 2:]
+        left_bottom_y = left_y[: left_len // 2]
+        right_bottom_y = right_y[: right_len // 2]
+        top_curvatures = self.calculate_curvature((left_top_x, left_top_y), (right_top_x, right_top_y))
+        bottom_curvatures = self.calculate_curvature((left_bottom_x, left_bottom_y), (right_bottom_x, right_bottom_y))
+        full_curvature = self.calculate_curvature((left_x, left_y), (right_x, right_y))
+        # print("Top Curvature:{0} -- Bottom Curvature:{1}".format(top_curvatures, bottom_curvatures))
+
+        if self.sanity_check_curvature(full_curvature[0], full_curvature[1]):
+            left_fit = np.polyfit(left_y, left_x, 2)
+            right_fit = np.polyfit(right_y, right_x, 2)
+            curvature_sanity = True
+        elif self.sanity_check_curvature(bottom_curvatures[0], bottom_curvatures[1]):
+            left_fit = np.polyfit(left_bottom_y, left_bottom_x, 2)
+            right_fit = np.polyfit(right_bottom_y, right_bottom_x, 2)
+            curvature_sanity = True
+        elif self.sanity_check_curvature(top_curvatures[0], top_curvatures[1]):
+            left_fit = np.polyfit(left_top_y, left_top_x, 2)
+            right_fit = np.polyfit(right_top_y, right_top_x, 2)
+            curvature_sanity = True
+        else:
+            # TODO: patch fix.
+            print("sanity failed..")
+            left_fit = np.polyfit(left_y, left_x, 2)
+            right_fit = np.polyfit(right_y, right_x, 2)
+
+        new_left_x_points = left_fit[0] * (self.y_points ** 2) + left_fit[1] * (self.y_points) + left_fit[2]
+        new_right_x_points = right_fit[0] * (self.y_points ** 2) + right_fit[1] * (self.y_points) + right_fit[2]
+        if curvature_sanity:
+            self.xpoints_left = new_left_x_points
+            self.xpoints_right = new_right_x_points
+        if new_left_x_points is None or new_right_x_points is None:
+            self.detected = False
+            self.dropped_frames += 1
+        else:
+            self.detected = True
+            if curvature_sanity:
+                self.calculate_center_offset((new_left_x_points, new_left_x_points))
+                self._update_lane_points(new_left_x_points, new_right_x_points, left_fit, right_fit)
+
+
+
+
     def histogram_detect(self, img, visualize=False):
         """ Find peaks in histogram in the binary image."""
-        width = 100 # Width of the window.
+        width = 80 # Width of the window.
         minpix = 50 # Minimum number of pixels found in recenter window.
-        print("histogram detect.")
         histogram = np.sum(img[img.shape[0] // 2:, :], axis=0)
         # https://gist.github.com/jul/3794506
         histogram = medfilt(histogram, [41])  # Smoothen the histogram values.
         out_img = np.dstack((img, img, img)) * 255
+
         if visualize:
-            viz.draw_img(histogram)
-            viz.draw_img(out_img)
+            plt.plot(histogram)
+            plt.show()
+            viz.draw_img(out_img, True)
 
         midpoint = np.int(histogram.shape[0] // 2)
         leftx_base = np.argmax(histogram[:midpoint])
@@ -155,7 +212,6 @@ class lanes:
         lefty = nonzeroy[left_lane_indices]
         rightx = nonzerox[right_lane_indices]
         righty = nonzeroy[right_lane_indices]
-
         # fit points.
         left_fit = np.polyfit(lefty, leftx, 2)
         right_fit = np.polyfit(righty, rightx, 2)
@@ -174,6 +230,7 @@ class lanes:
                 self.calculate_center_offset((new_left_x_points, new_left_x_points))
                 self._update_lane_points(new_left_x_points, new_right_x_points, left_fit, right_fit)
 
+
     def locality_search(self, img):
         """
         Do sliding window search based on previous frames.
@@ -187,7 +244,7 @@ class lanes:
         left_x_points = fp_left[0] * (nonzeroy ** 2) + fp_left[1] * (nonzeroy) + fp_left[2]
         right_x_points = fp_right[0] * (nonzeroy ** 2) + fp_right[1] * (nonzeroy) + fp_right[2]
         # right_x_points = right_x_points[::-1]
-        margin = 200
+        margin = 80
 
         # determine the range to lookup for in the new frame based on the old coordinates.
         left_lane_inds = ((nonzerox > (left_x_points - margin)) & (nonzerox < (left_x_points + margin)))
@@ -228,41 +285,54 @@ class lanes:
     def calculate_curvature(self, left_points, right_points):
         """Determine the curvature from lane points"""
         # Calculate Curvature corresponding to centre of image.
+        l_curve = 0
+        r_curve = 0
+        if len(left_points[0]) and len(left_points[1]) and len(right_points[0]) and len(right_points[1]):
+            left_fit_cr = np.polyfit(left_points[1] * self.y_m_per_pix, left_points[0] * self.x_m_per_pix, 2)
+            right_fit_cr = np.polyfit(right_points[1] * self.y_m_per_pix, right_points[0] * self.x_m_per_pix, 2)
 
-        left_fit_cr = np.polyfit(left_points[1] * self.y_m_per_pix, left_points[0] * self.x_m_per_pix, 2)
-        right_fit_cr = np.polyfit(right_points[1] * self.y_m_per_pix, right_points[0] * self.x_m_per_pix, 2)
-
-        l_curve = ((1 + (left_fit_cr[0] * self.y_centre + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
-        r_curve = ((1 + (right_fit_cr[0] * self.y_centre + right_fit_cr[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit_cr[0])
+            l_curve = ((1 + (left_fit_cr[0] * self.y_centre + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(
+                2 * left_fit_cr[0])
+            r_curve = ((1 + (right_fit_cr[0] * self.y_centre + right_fit_cr[1]) ** 2) ** 1.5) / np.absolute(
+                2 * left_fit_cr[0])
         output = (l_curve, r_curve)
+
         return output
 
     def sanity_check_curvature(self, l_curv, r_curv):
         """ Check if the curvature is in limits."""
         check = True
+        curv_diff_l = None
+        curv_diff_r = None
+
         # Check sanity of curvature.
         if l_curv < 600 or r_curv < 600:
             check = False
 
-        if l_curv > 1300 or r_curv > 1300:
+        if l_curv > 2500 or r_curv > 2500:
             check = False
 
         if check:
             self._update_curvatures(l_curv, r_curv)
 
-        curv_diff_l = (self.curvature_left - self.curvature_left_prev)/self.curvature_left_prev
-        curv_diff_r = (self.curvature_right - self.curvature_right_prev)/self.curvature_right_prev
+        if self.curvature_left_prev != None and self.curvature_left != None:
+            curv_diff_l = (self.curvature_left - self.curvature_left_prev)/self.curvature_left_prev
+        if self.curvature_right_prev != None and self.curvature_right != None:
+            curv_diff_r = (self.curvature_right - self.curvature_right_prev)/self.curvature_right_prev
 
-        if abs(curv_diff_l) > 0.05 or abs(curv_diff_r) > 0.05:
-            check = False
+        if curv_diff_l != None and curv_diff_r != None:
+            if abs(curv_diff_l) > 0.05 or abs(curv_diff_r) > 0.05:
+                check = False
+        else:
+            check = True # First instance check.
         return check
 
     def pipeline(self, img):
-        if self.dropped_frames >= 6:
-            self.histogram_detect(img)
+        if self.dropped_frames >= 11:
+            self.histogram_detect(img, False)
         else:
             self.locality_search(img)
-            if self.dropped_frames >= 6:
-                self.histogram_detect(img)
+            if self.dropped_frames >= 11:
+                self.histogram_detect(img, False)
         if self.detected:
             self.dropped_frames = 0

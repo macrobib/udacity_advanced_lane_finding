@@ -5,10 +5,15 @@ from moviepy.editor import VideoFileClip
 from src.lanes import lanes
 from src.visualize import visualize
 from src.image_handler import ImageHandler
+import matplotlib.image as mp
+import matplotlib.pyplot as plt
+import numpy as np
+import glob
 
 # Default input/output
 output = "./output/output.mp4"
 input = "./videos/project_video.mp4"
+input_2 = "./videos/clipped.mp4"
 image_shape = (720, 1280, 3)
 
 # Helper objects.
@@ -29,12 +34,10 @@ def pipeline(img):
     global calib
     global condition
     global lane
-    img_copy = img
-    # vis.draw_img(img)
+    img_copy = np.copy(img)
+    print(img.shape)
     if condition['visualize']:
-        image = vis.gradient_and_combine(img)
-        vis.visualize_colorspace(img)
-        vis.draw_img(image)
+        vis.draw_img(img)
     if condition['smoothen']:
         img_copy = imgh.blur_image(img_copy)
     dst = calib.undistort_image(img_copy)
@@ -56,6 +59,39 @@ def pipeline(img):
         vis.draw_img(output_image)
     return output_image
 
+def main_test():
+    global vis
+    global imgh
+    global calib
+    global lane
+    calib = calibration(9, 6, './camera_cal')
+    # img = mp.imread('./examples/test6.jpg')
+    # undist = calib.undistort_image(img)
+    # calib.display_2d_grid(img, undist)
+    # Process video and read frame.
+    vis = visualize(image_shape)
+    imgh = ImageHandler()
+    lane = lanes(image_shape)
+
+    file = mp.imread('./examples/solidYellowCurve.jpg')
+    file = cv2.resize(file, (1280, 720))
+    plt.imshow(file)
+    plt.show()
+    opt = pipeline(file)
+    vis.draw_img(opt)
+
+    files = glob.glob('./special_cases/*.png')
+    print(files)
+    for file in files:
+        file = mp.imread(file)
+        print(file.shape)
+        plt.imshow(file)
+        plt.show()
+        file = cv2.resize(file, (1280, 720))
+        plt.imshow(file)
+        plt.show()
+        opt = pipeline(file)
+        vis.draw_img(opt)
 
 def main():
     """Main pipeline."""
@@ -65,7 +101,6 @@ def main():
     global lane
     # Check and do camera calibration if necessary.
     calib = calibration(9, 6, './camera_cal')
-    # Process video and read frame.
     vis = visualize(image_shape)
     imgh = ImageHandler()
     lane = lanes(image_shape)
@@ -75,3 +110,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    # main_test()

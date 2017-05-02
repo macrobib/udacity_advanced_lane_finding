@@ -132,7 +132,7 @@ class calibration:
 
     def display_2d_grid(self, img, undistorted):
         """Display calibrated images in a 2D grid."""
-        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
         f.tight_layout()
         ax1.imshow(img, aspect='auto')
         ax1.set_title('Original Image', fontsize=15)
